@@ -4,7 +4,7 @@
   "description": "Boilerplate com código legado para refatoração",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js"
+    "start": "node --env-file-if-exists=.env src/app.js"
   },
   "dependencies": {
     "express": "^4.18.2",

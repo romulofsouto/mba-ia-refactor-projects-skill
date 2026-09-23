@@ -1,14 +1,24 @@
 const express = require('express');
-const AppManager = require('./AppManager');
-const { config } = require('./utils');
+const config = require('./config');
+const logger = require('./config/logger');
+const database = require('./config/database');
+const routes = require('./routes');
+const errorHandler = require('./middlewares/errorHandler');
 
-const app = express();
-app.use(express.json());
+async function start() {
+    const app = express();
+    app.locals.db = await database.connect(config.dbPath);
 
-const manager = new AppManager();
-manager.initDb();
-manager.setupRoutes(app);
+    app.use(express.json());
+    app.use(routes);
+    app.use(errorHandler);
 
-app.listen(config.port, () => {
-    console.log(`Frankenstein LMS rodando na porta ${config.port}...`);
+    if (!config.adminToken) logger.warn('ADMIN_TOKEN not set: admin routes will reject every request');
+
+    app.listen(config.port, () => logger.info('server started', { port: config.port }));
+}
+
+start().catch((err) => {
+    logger.error('failed to start', { error: err.message, stack: err.stack });
+    process.exit(1);
 });

@@ -1,4 +1,5 @@
 @baseUrl = http://localhost:3000
+@adminToken = troque-pelo-ADMIN_TOKEN-do-seu-.env
 
 ### Checkout - sucesso
 POST {{baseUrl}}/api/checkout
@@ -26,6 +27,8 @@ Content-Type: application/json
 
 ### Relatório financeiro administrativo
 GET {{baseUrl}}/api/admin/financial-report
+X-Admin-Token: {{adminToken}}
 
 ### Deletar usuário
 DELETE {{baseUrl}}/api/users/1
+X-Admin-Token: {{adminToken}}
