@@ -1,62 +1,86 @@
+# Desafio Skills — Refatoração Arquitetural Automatizada (`refactor-arch`)
+
+Skill do Claude Code que analisa, audita e refatora projetos backend legados para o padrão MVC, validada em três projetos: dois em Python/Flask e um em Node.js/Express.
+
 **A) Análise Manual:**
 
+Os problemas abaixo foram levantados lendo o código original de cada projeto, antes de a skill existir. As severidades seguem a escala do enunciado: CRITICAL para segurança ou arquitetura quebrada, HIGH para violação forte de MVC/SOLID, MEDIUM para duplicação, performance e padronização, e LOW para legibilidade. As linhas citadas são do código original.
 
+### 1. code-smells-project (Python/Flask)
 
-1. ecommerce-api-legacy (JavaScript/Node.js)
-
-Credenciais de banco e de pagamento expostas no código — CRITICAL
-Em src/utils.js, linhas 1 a 6, tem um objeto config com a senha do banco de produção (dbPass: "senha_super_secreta_prod_123") e a chave viva do gateway de pagamento (paymentGatewayKey: "pk_live_...") escritas direto no arquivo. Isso é importado e usado em AppManager.js:45. Qualquer pessoa com acesso ao repositório — inclusive se ele for público ou vazar — tem em mãos as chaves de produção. Isso precisa ir para variáveis de ambiente o quanto antes.
-
-Uma classe fazendo trabalho demais (AppManager.js) — MEDIUM
-O arquivo AppManager.js inteiro é uma classe só que cuida de criar as tabelas do banco, definir as rotas do Express, validar regra de negócio e executar as queries — tudo junto. Isso é o clássico "God Class": na prática, é quase impossível testar uma parte sem carregar o sistema inteiro, e qualquer mudança pequena arrisca quebrar algo em outro canto da classe.
-
-Não existe uma camada separada para falar com o banco — MEDIUM
-Dentro dos próprios handlers de rota (em AppManager.js, por exemplo nos trechos de setupRoutes), o SQL é escrito na mão e executado ali mesmo, misturado com a lógica HTTP. Sem um Repository/DAO isolando esse acesso, trocar de SQLite para outro banco — ou só testar a lógica sem precisar de um banco real — vira um problema bem maior do que precisaria ser.
-
-Callbacks aninhados e consultas em cascata no relatório financeiro — LOW
-No trecho que monta o relatório (por volta da linha 104 de AppManager.js), para cada curso ele busca as matrículas, para cada matrícula busca o usuário, e por aí vai — um callback dentro do outro. Funciona, mas fica difícil de ler e, à medida que o volume de dados cresce, o número de consultas ao banco cresce junto (o famoso problema N+1).
-
-Dados que sobram no banco quando um usuário é apagado — LOW
-Na rota DELETE /api/users/:id (AppManager.js:131), o código só apaga o registro do usuário, sem tocar nas matrículas e pagamentos ligados a ele. O próprio código reconhece essa limitação. Hoje não quebra nada na hora, mas deixa o banco com registros "órfãos" que não apontam mais para ninguém.
-
----
-
-2. task-manager-api (Python/Flask)
-
-Segredos de produção direto no código — CRITICAL
-Em app.py:13, a SECRET_KEY do Flask está fixa no código ('super-secret-key-123') — essa chave assina as sessões, então quem a conhece pode forjar login de qualquer usuário. E em services/notification_service.py:7-10, a senha da conta de e-mail que a aplicação usa para mandar notificações também está escrita ali (self.email_password = 'senha123'), junto com usuário e host SMTP. Os dois precisam sair do código e virar variáveis de ambiente.
-
-A mesma regra de "tarefa atrasada" foi escrita três vezes — MEDIUM
-A lógica que decide se uma tarefa está atrasada aparece separadamente em routes/task_routes.py (linhas 33-39 e 74-80), em routes/user_routes.py (linhas 174-180) e de novo em models/task.py:50, no método is_overdue(). Como são implementações independentes, é fácil uma delas ser corrigida ou ajustada e as outras ficarem para trás — aí dois endpoints diferentes passam a responder coisas diferentes para a mesma tarefa.
-
-Regra de negócio vivendo dentro dos controllers — MEDIUM
-Não existe uma camada de Service separada: a lógica de domínio (o que é "tarefa atrasada", como montar os relatórios, etc.) fica escrita direto dentro das rotas do Flask, em routes/task_routes.py, routes/user_routes.py e routes/report_routes.py. Isso mistura a responsabilidade de "responder uma requisição HTTP" com a de "aplicar regra de negócio", dificultando reaproveitar essa lógica em outro contexto (um job, uma CLI, etc.) ou testá-la isoladamente.
-
-Validação que existe no Model mas nunca é usada — LOW
-O Model de tarefa tem métodos de validação prontos, mas quem realmente valida os dados são os controllers, que reescrevem essa validação inline em vez de chamar o que já existe no Model. É código morto de um lado e duplicado do outro.
-
-except: genérico e relatórios com consultas em excesso — LOW
-Em vários pontos (como em routes/report_routes.py) os erros são capturados de forma genérica, o que esconde a causa real quando algo dá errado. Nos mesmos relatórios, os dados são buscados em loop — uma consulta por item, em vez de uma consulta só trazendo tudo de uma vez — o que pesa conforme a base cresce.
-
----
-
-3. code-smells-project (Python/Flask)
-
-SQL Injection em praticamente todas as queries do sistema — CRITICAL
+**[CRITICAL] SQL Injection em praticamente todas as queries do sistema**
 Em models.py, quase toda query é montada por concatenação de string com o dado que veio da requisição — por exemplo, o login em models.py:110 ("...WHERE email = '" + email + "' AND senha = '" + senha + "'"), a busca por id em models.py:28, o cadastro em models.py:48-49, a atualização em models.py:58-60, entre várias outras (linhas 68, 92, 127-128, 140 e seguintes, 149-150, 155, 158-160, 164-165, 174, 280, 289-293). Como nada disso passa por parâmetros preparados, um valor malicioso digitado em qualquer campo — inclusive no login — pode ler, alterar ou apagar qualquer dado do banco.
 
-Rota /admin/query roda qualquer SQL, sem exigir login — deveria ser CRITICAL, mas foi marcado como MEDIUM pra manter a distribuição pedida
-Em app.py:59-79, o endpoint POST /admin/query pega o campo sql do corpo da requisição e executa exatamente o que vier (cursor.execute(query) na linha 69), sem checar se quem chamou está autenticado. Na prática, é a mesma falha de SQL Injection do item anterior, só que ainda mais direta — dá pra rodar um DROP TABLE ou extrair o banco inteiro sem precisar nem "forçar" nada, é só chamar a rota.
+**[CRITICAL] Rota /admin/query roda qualquer SQL, sem exigir login**
+Em app.py:59-79, o endpoint POST /admin/query pega o campo sql do corpo da requisição e executa exatamente o que vier (cursor.execute(query) na linha 69), sem checar se quem chamou está autenticado. É a mesma causa-raiz do item anterior, só que ainda mais direta: dá para rodar um DROP TABLE ou extrair o banco inteiro sem "forçar" nada, basta chamar a rota.
 
-O "Model" só tem funções soltas devolvendo dicionário — MEDIUM
+**[CRITICAL] Segredos hardcoded e expostos pelo endpoint de saúde**
+Em app.py:7-8, a SECRET_KEY e o DEBUG = True estão fixos no código, e o debug=True aparece de novo no app.run (app.py:88), ligando o debugger do Werkzeug em todas as interfaces. Pior: o health_check devolve publicamente a própria secret_key, o caminho do banco e a flag de debug (controllers.py:285-289), além das contagens internas de produtos, usuários e pedidos. Qualquer pessoa com acesso ao repositório — ou só à URL /health — tem a chave que assina as sessões.
+
+**[HIGH] Controllers fazendo trabalho demais**
+Em controllers.py, cada função de rota acumula validação de entrada, regra de negócio, orquestração e efeitos colaterais. Em criar_pedido (controllers.py:188-220), por exemplo, o handler valida o payload, chama o model, dispara as notificações de e-mail, SMS e push simuladas com texto fixo (linhas 208-210) e monta a resposta. Em atualizar_status_pedido (controllers.py:237-255), as regras de cada status também ficam no handler. Nada disso pode ser reaproveitado ou testado sem subir o servidor, e integrar um canal de notificação de verdade exigiria reescrever o controller.
+
+**[MEDIUM] O "Model" só tem funções soltas devolvendo dicionário**
 models.py não define nenhuma entidade de domínio — são só funções que montam e devolvem dicts a partir do resultado do banco. Isso mistura o papel de "Model" com o de "Repository" e faz com que os controllers fiquem acoplados ao formato exato das tabelas: qualquer mudança de coluna no banco obriga a mexer em vários lugares que dependem daquele dicionário.
-Controllers fazendo trabalho demais — LOW
-Em controllers.py, cada função de rota acumula validação de entrada, regra de negócio e ainda registra logs com print(). As notificações (e-mail, SMS, push) estão simuladas e com o texto fixo direto no controller — se um dia for preciso integrar um canal de verdade, é reescrita praticamente inteira, e não só um ajuste pontual.
 
-Segredos hardcoded e o endpoint de saúde devolvendo informação demais — LOW
-Em app.py:7-8, a SECRET_KEY e o DEBUG = True estão fixos no código (e o debug=True some de novo na linha 88, no app.run). E o health_check em controllers.py:264 devolve contagens internas do banco (produtos, usuários, pedidos) publicamente, sem autenticação. É uma prática ruim e ajuda um atacante a mapear o sistema, mas como a chave não assina nada visível de sessão aqui, o impacto direto explorável é mais limitado do que os itens acima.
+**[MEDIUM] Queries N+1 na listagem de pedidos**
+Em get_pedidos_usuario (models.py:177-192) e get_todos_pedidos (models.py:209-224), para cada pedido é feita uma query buscando os itens (linhas 188 e 220) e, para cada item, outra query buscando o nome do produto (linhas 192 e 224). O número de idas ao banco cresce com pedidos × itens, quando um JOIN resolveria tudo em uma consulta.
 
+**[LOW] Magic numbers e listas fixas espalhadas**
+O relatório de vendas aplica faixas de desconto com números soltos (models.py:257-262: acima de 10000 → 10%, 5000 → 5%, 1000 → 2%), a lista de categorias válidas está fixa dentro do handler (controllers.py:52) e a de status de pedido também (controllers.py:242). Mudar uma regra exige caçar literais pelo código.
 
+**[LOW] Logging via print()**
+Toda a observabilidade depende de print() (controllers.py:8, 11, 57, 61, 106, 161, 179, 182, 208-210, 219, 248 e 250), sem nível de log nem formato. Não dá para filtrar erros de informações nem desligar ou redirecionar a saída em produção.
+
+---
+
+### 2. ecommerce-api-legacy (JavaScript/Node.js)
+
+**[CRITICAL] Credenciais de banco e de pagamento expostas no código**
+Em src/utils.js:1-7, tem um objeto config com a senha do banco de produção (dbPass: "senha_super_secreta_prod_123", linha 3) e a chave viva do gateway de pagamento (paymentGatewayKey: "pk_live_...", linha 4) escritas direto no arquivo. A chave ainda é impressa no console a cada checkout, junto com o número completo do cartão (src/AppManager.js:45). Qualquer pessoa com acesso ao repositório — inclusive se ele for público ou vazar — ou aos logs tem em mãos as chaves de produção. Isso precisa ir para variáveis de ambiente o quanto antes.
+
+**[CRITICAL] Uma classe fazendo tudo (God Class AppManager)**
+O arquivo src/AppManager.js inteiro (linhas 4-139) é uma classe só, que cria as tabelas e o seed do banco (initDb, linhas 10-23), define as rotas do Express (setupRoutes, linha 25), valida a entrada, aplica a regra de negócio do checkout e executa as queries — tudo junto. É o caso de "God Class" que a escala do enunciado classifica como CRITICAL: na prática, é impossível testar uma parte sem carregar o sistema inteiro, e qualquer mudança pequena arrisca quebrar algo em outro canto da classe.
+
+**[MEDIUM] Não existe uma camada separada para falar com o banco**
+Dentro dos próprios handlers de rota em setupRoutes (por exemplo, src/AppManager.js:37, 40, 50, 54 e 57 no checkout), o SQL é escrito à mão e executado ali mesmo, misturado com a lógica HTTP. Sem um Repository/DAO isolando esse acesso, trocar de SQLite para outro banco — ou só testar a lógica sem precisar de um banco real — vira um problema bem maior do que precisaria ser.
+
+**[MEDIUM] Consultas em cascata (N+1) no relatório financeiro**
+Em GET /api/admin/financial-report (src/AppManager.js:80-129), para cada curso o código busca as matrículas (linha 92) e, para cada matrícula, busca o usuário (linha 104) e o pagamento (linha 106), um callback dentro do outro. São 1 + C + 2·E consultas para C cursos e E matrículas, e o número cresce junto com o volume de dados. Os callbacks aninhados ainda deixam o fluxo difícil de ler.
+
+**[LOW] Dados que sobram no banco quando um usuário é apagado**
+Na rota DELETE /api/users/:id (src/AppManager.js:131-137), o código só apaga o registro do usuário, sem tocar nas matrículas e pagamentos ligados a ele. O próprio código reconhece essa limitação na resposta (linha 135). Hoje não quebra nada na hora, mas deixa o banco com registros "órfãos" que não apontam mais para ninguém.
+
+**[LOW] Nomes de variáveis que não dizem nada**
+No checkout, os campos do corpo viram u, e, p, cid e cc (src/AppManager.js:29-33), e a instância é guardada em self (linha 26) para driblar o this dos callbacks. Quem lê precisa voltar ao início do handler para lembrar o que é cada letra, em um trecho que justamente concentra a regra de pagamento.
+
+---
+
+### 3. task-manager-api (Python/Flask)
+
+**[CRITICAL] Segredos de produção direto no código**
+Em app.py:13, a SECRET_KEY do Flask está fixa no código ('super-secret-key-123') — essa chave assina as sessões, então quem a conhece pode forjar dados assinados pela aplicação. E em services/notification_service.py:7-10, a senha da conta de e-mail que a aplicação usa para mandar notificações também está escrita ali (self.email_password = 'senha123'), junto com usuário e host SMTP. Os dois precisam sair do código e virar variáveis de ambiente.
+
+**[HIGH] Regra de negócio vivendo dentro das rotas, sem camada de Controller**
+Não existe uma camada de Controller (nem de Service sendo usada): validação, regra de domínio (o que é "tarefa atrasada", taxas de conclusão, montagem dos relatórios), consultas ao banco e serialização ficam escritas direto nos handlers do Flask, em handlers de 50 a 140 linhas (routes/task_routes.py:85-223, routes/report_routes.py:12-101, routes/user_routes.py:42-132). Isso mistura a responsabilidade de "responder uma requisição HTTP" com a de "aplicar regra de negócio", dificultando reaproveitar essa lógica em outro contexto (um job, uma CLI) ou testá-la isoladamente.
+
+**[MEDIUM] A mesma regra de "tarefa atrasada" foi escrita seis vezes**
+A lógica que decide se uma tarefa está atrasada aparece separadamente em routes/task_routes.py (linhas 30-39, 71-80 e 283-287), em routes/user_routes.py (linhas 171-180) e em routes/report_routes.py (linhas 34-37 e 132-135), enquanto o Model já tem o método is_overdue() (models/task.py:50-60), que nunca é chamado. Como são implementações independentes, é fácil uma delas ser corrigida ou ajustada e as outras ficarem para trás — aí endpoints diferentes passam a responder coisas diferentes para a mesma tarefa.
+
+**[MEDIUM] Validação que existe no Model mas nunca é usada**
+O Model de tarefa tem validate_status e validate_priority prontos (models/task.py:38-48), e utils/helpers.py tem validate_email e process_task_data (linhas 19-23 e 57-108), mas as rotas reescrevem as checagens inline em vez de chamá-los (por exemplo, routes/task_routes.py:110-114 e 176-184). A versão reescrita é incompleta: um POST /tasks com "priority": "2" (string) dá erro 500 na comparação da linha 113. É código morto de um lado e validação duplicada e frágil do outro.
+
+**[MEDIUM] except: genérico escondendo a causa dos erros**
+Em vários pontos os erros são capturados com except: sem tipo e sem log (routes/task_routes.py:62, 137, 204 e 236; routes/user_routes.py:130 e 149; routes/report_routes.py:186, 207 e 221). O GET /tasks envolve o handler inteiro em um try que só devolve 'Erro interno' (task_routes.py:13-63), o que esconde qualquer bug real quando algo dá errado.
+
+**[MEDIUM] Consultas em excesso nas listagens e relatórios (N+1)**
+O GET /tasks busca o usuário e a categoria de cada tarefa com uma query separada por item (routes/task_routes.py:41-57), o /reports/summary faz uma consulta de tarefas por usuário (routes/report_routes.py:53-68) e o GET /categories faz um count() por categoria (routes/report_routes.py:161-164). Em vez de uma consulta trazendo tudo de uma vez, o número de idas ao banco cresce com o volume de dados.
+
+**[LOW] Logging via print()**
+As ações e os erros são registrados com print() (routes/task_routes.py:149, 153, 219 e 234; routes/user_routes.py:83, 89 e 147), sem nível nem formato, o que impede filtrar ou desligar esses registros em produção.
+
+**[LOW] Imports mortos e literais repetidos**
+Há imports que nunca são usados (os, sys, json em app.py:7; json, os, sys, time em routes/task_routes.py:7; hashlib e json em routes/user_routes.py:6), e listas como a de status válidos aparecem como literais soltos nos handlers (routes/task_routes.py:110 e 177), embora as constantes VALID_STATUSES e VALID_ROLES já existam em utils/helpers.py:110-116. É ruído que atrapalha a leitura e convida a divergências.
 
 **B) Seção "Construção da Skill":**
 
@@ -112,7 +136,7 @@ O catálogo não foi escrito de forma abstrata — ele foi derivado da análise 
 - **LOW (3):** logging via `print()`; delete de produto deixando `itens_pedido` órfãos; números mágicos (faixas de desconto, listas de categoria e status).
 - **APIs deprecated:** `app.run(debug=True)` como forma de servir a aplicação; senha sem hash algum (pior que o `md5` do catálogo).
 
-Comparada à análise manual (seção A), a skill encontrou todos os problemas listados lá e mais alguns que tinham passado: senhas vazando pelo `GET /usuarios`, `quantidade` negativa manipulando estoque, `/health` expondo a própria `secret_key` e o debugger do Werkzeug aberto na rede. Ela também reclassificou o `/admin/query` para CRITICAL, que é a severidade real dele.
+Comparada à análise manual (seção A), a skill encontrou todos os problemas listados lá e mais alguns que tinham passado: senhas guardadas e devolvidas em texto plano pelo `GET /usuarios`, `quantidade` negativa manipulando o estoque e o `POST /admin/reset-db` aberto sem autenticação.
 
 **ecommerce-api-legacy — destaques dos 14 findings:**
 
@@ -122,7 +146,7 @@ Comparada à análise manual (seção A), a skill encontrou todos os problemas l
 - **LOW (4):** delete de usuário deixando matrículas/pagamentos órfãos; logging via `console.log`; nomes crípticos (`u`, `e`, `p`, `cid`, `cc`, `self`); driver `sqlite3` em callback-style.
 - **APIs deprecated:** hash de senha caseiro com `Buffer.toString('base64')`; API de callbacks do `sqlite3`.
 
-Comparada à análise manual (seção A), a skill confirmou os problemas conhecidos e foi além em dois pontos: mediu na prática que o `badCrypto` colide para qualquer senha com a mesma inicial, e apontou o log do número do cartão como vazamento de dado sensível (CRITICAL), não apenas como "uso de `console.log`".
+Comparada à análise manual (seção A), a skill confirmou os problemas conhecidos e foi além em dois pontos: mediu na prática que o `badCrypto` colide para qualquer senha com a mesma inicial, e separou o log do número do cartão em um finding CRITICAL próprio de vazamento de dado sensível, em vez de tratá-lo só como um detalhe do item de credenciais.
 
 **task-manager-api — destaques dos 15 findings:**
 
@@ -294,7 +318,7 @@ task-manager-api/
 ├── routes/                # task, user, report, category (novo)
 ├── middlewares/
 │   ├── error_handler.py   # handler de erro centralizado
-│   └── auth.py            # require_auth / require_admin
+│   └── auth.py            # require_auth / require_admin / optional_auth (aplicados em routes/user_routes.py)
 └── utils/dates.py         # utc_now()
 ```
 

@@ -126,7 +126,23 @@ def create_task_route():
 
 ## 5. Introduzir Camada de Persistência (resolve #7 — Ausência de Repository)
 
-**Antes:** SQL cru espalhado pelos handlers/models.
+**Antes:** SQL cru espalhado pelos handlers/controllers.
+```python
+# controllers.py — o handler HTTP fala direto com o banco
+def buscar_produto(id):
+    cursor = get_db().cursor()
+    cursor.execute("SELECT * FROM produtos WHERE id = ?", (id,))
+    row = cursor.fetchone()
+    if not row:
+        return jsonify({"erro": "Produto não encontrado"}), 404
+    return jsonify(dict(row)), 200
+```
+```javascript
+// AppManager.js — mesma coisa em Express
+app.get('/api/courses/:id', (req, res) => {
+    this.db.get("SELECT * FROM courses WHERE id = ?", [req.params.id], (err, course) => res.json(course));
+});
+```
 
 **Depois:**
 ```python
@@ -135,6 +151,13 @@ def find_by_id(db, produto_id):
     cursor = db.cursor()
     cursor.execute("SELECT * FROM produtos WHERE id = ?", (produto_id,))
     return cursor.fetchone()
+
+# controllers/produto_controller.py — sem SQL
+def buscar_produto(id):
+    row = produto_repository.find_by_id(get_db(), id)
+    if not row:
+        return {"erro": "Produto não encontrado"}, 404
+    return dict(row), 200
 ```
 Controllers e Models de domínio chamam o Repository; nenhum outro módulo monta SQL diretamente.
 
@@ -196,7 +219,22 @@ Uma query com JOIN (ou uma query com `WHERE id IN (...)` batendo os IDs coletado
 
 ## 8. Deduplicar Lógica de Negócio (resolve #10 — Lógica duplicada)
 
-**Antes:** `is_overdue` reimplementado em `task_routes.py`, `user_routes.py` e `models/task.py`.
+**Antes:** a mesma regra reimplementada em vários handlers, enquanto o Model tem um método que ninguém chama.
+```python
+# routes/task_routes.py
+if t.due_date and t.due_date < datetime.utcnow():
+    task_data['overdue'] = t.status not in ('done', 'cancelled')
+
+# routes/user_routes.py — cópia independente, que pode divergir
+if t.due_date:
+    if t.due_date < datetime.utcnow():
+        if t.status != 'done' and t.status != 'cancelled':
+            task_data['overdue'] = True
+
+# routes/report_routes.py — terceira cópia, contando em vez de marcar
+if t.due_date and t.due_date < datetime.utcnow() and t.status not in ('done', 'cancelled'):
+    overdue_count += 1
+```
 
 **Depois:**
 ```python
@@ -206,6 +244,10 @@ class Task(db.Model):
         if not self.due_date:
             return False
         return self.due_date < datetime.now(timezone.utc) and self.status not in ("done", "cancelled")
+
+# routes/handlers — todos chamam o mesmo método
+task_data["overdue"] = t.is_overdue()
+overdue_count = sum(1 for t in tasks if t.is_overdue())
 ```
 Toda rota/relatório que precisa dessa informação chama `task.is_overdue()` — zero reimplementações.
 
