@@ -30,6 +30,14 @@ utils/dates.py         # utc_now() (substitui datetime.utcnow, deprecated)
 
 ## Autenticação
 
-`POST /login` devolve um token assinado com `SECRET_KEY` (válido por `AUTH_TOKEN_MAX_AGE` segundos). Os decorators `require_auth` / `require_admin` em `middlewares/auth.py` validam o header `Authorization: Bearer <token>`, mas **ainda não estão aplicados a nenhuma rota**, para preservar o contrato público atual.
+`POST /login` devolve um token assinado com `SECRET_KEY` (válido por `AUTH_TOKEN_MAX_AGE` segundos), enviado como `Authorization: Bearer <token>`. Os decorators de `middlewares/auth.py` releem o usuário a cada requisição, então papel ou status revogados valem na hora.
+
+| Rota | Proteção |
+|---|---|
+| `DELETE /users/<id>` | `@require_admin` |
+| `PUT /users/<id>` | `@require_auth`: usuário comum altera só a si mesmo e nunca `role`/`active`; admin altera qualquer um |
+| `POST /users` | `@optional_auth`: cadastro público com `role` padrão `user`; `role` diferente de `user` exige token de admin |
+
+As demais rotas continuam públicas, como na versão original. No seed, o admin é `joao@email.com` / `1234`.
 
 Senhas usam `werkzeug.security` (scrypt). Hashes MD5 gravados pela versão antiga continuam aceitos e são migrados automaticamente no próximo login.

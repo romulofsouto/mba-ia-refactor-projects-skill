@@ -1,6 +1,7 @@
-from flask import Blueprint, request
+from flask import Blueprint, g, request
 
 from controllers import user_controller
+from middlewares.auth import optional_auth, require_admin, require_auth
 
 user_bp = Blueprint("users", __name__)
 
@@ -16,16 +17,19 @@ def get_user(user_id):
 
 
 @user_bp.route("/users", methods=["POST"])
+@optional_auth
 def create_user():
-    return user_controller.create_user(request.get_json(silent=True))
+    return user_controller.create_user(request.get_json(silent=True), g.auth)
 
 
 @user_bp.route("/users/<int:user_id>", methods=["PUT"])
+@require_auth
 def update_user(user_id):
-    return user_controller.update_user(user_id, request.get_json(silent=True))
+    return user_controller.update_user(user_id, request.get_json(silent=True), g.auth)
 
 
 @user_bp.route("/users/<int:user_id>", methods=["DELETE"])
+@require_admin
 def delete_user(user_id):
     return user_controller.delete_user(user_id)
 

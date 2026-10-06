@@ -89,6 +89,7 @@ O catálogo não foi escrito de forma abstrata — ele foi derivado da análise 
 - **Achar a severidade "certa" para o `/admin/query`:** esse endpoint do `code-smells-project` executa SQL arbitrário sem autenticação — na prática, tão grave quanto a SQL Injection generalizada, mas é a mesma causa-raiz. Resolvi criando um item específico no catálogo ("Endpoint Perigoso Sem Autenticação", CRITICAL/HIGH) separado do item genérico de SQL Injection, para o relatório não contar o mesmo problema duas vezes como CRITICAL nem escondê-lo como um LOW artificial.
 - **Projeto já parcialmente organizado (`task-manager-api`) não pode ser tratado como monolito:** se o `SKILL.md` mandasse sempre "criar a estrutura MVC do zero", ele destruiria uma organização em `routes/`/`models/`/`services/` que já é razoável. Resolvi adicionando o princípio "Adapte-se ao ponto de partida" no `SKILL.md` e uma nota explícita em `04-architecture-guidelines.md` dizendo para **adicionar** o que falta (Controllers, config centralizada) em vez de recriar a árvore.
 - **Evitar relatório inflado:** como o catálogo tem 15 itens, havia o risco de a skill forçar a contagem para "usar todos". Resolvi com uma regra explícita no `SKILL.md` ("não infle o relatório... nunca invente findings para bater uma meta") e a mesma orientação repetida nos princípios gerais.
+- **Middleware criado, mas não aplicado (2ª iteração no `task-manager-api`):** na primeira execução, a Fase 3 trocou o token falso por um assinado e criou `require_auth`/`require_admin`, mas não os aplicou a nenhuma rota, alegando que exigir token "mudaria o contrato público". O finding HIGH (qualquer anônimo apaga usuários ou vira admin) continuou aberto, e o próprio relatório o marcou como pendente. A causa estava na skill: a regra de preservar o contrato não deixava claro que correções de segurança são a exceção, e o checklist do playbook permitia "adiar com justificativa" um finding HIGH. Corrigi os arquivos de referência: a exceção ficou explícita no `SKILL.md` e no `04-architecture-guidelines.md` (nova regra 6: "middleware que nenhuma rota usa é código morto"); o catálogo ganhou os sinais "campo de privilégio aceito do body" e "middleware definido sem uso"; o playbook ganhou o padrão #9b (autenticar a rota e autorizar o campo sensível), com antes/depois; e a Fase 3 passou a validar cada rota protegida sem token (401/403) e com token (status original). Depois de copiar a skill de novo para os 3 projetos, reexecutei a skill no `task-manager-api` partindo do código original.
 - **Garantir rastreabilidade arquivo:linha em vez de findings vagos:** o `Instrucoes.md` exige linha exata por finding. Resolvi tornando isso uma regra obrigatória tanto no `SKILL.md` (Fase 2, regra 1) quanto no `03-report-template.md`, instruindo explicitamente a abrir o arquivo e confirmar a linha antes de escrever o finding, em vez de aceitar "em algum lugar do arquivo X".
 
 **C) Seção "Resultados":**
@@ -101,7 +102,7 @@ O catálogo não foi escrito de forma abstrata — ele foi derivado da análise 
 |---|---|---|---|---|---|---|---|
 | code-smells-project | Python + Flask 3.1.1 | 4 | 5 | 6 | 3 | **18** | [`reports/audit-project-1.md`](reports/audit-project-1.md) |
 | ecommerce-api-legacy | Node.js + Express 4.18.2 | 4 | 3 | 3 | 4 | **14** | [`reports/audit-project-2.md`](reports/audit-project-2.md) |
-| task-manager-api | Python + Flask 3.0.0 (Flask-SQLAlchemy 3.1.1) | 2 | 4 | 6 | 3 | **15** | [`reports/audit-project-3.md`](reports/audit-project-3.md) |
+| task-manager-api | Python + Flask 3.0.0 (Flask-SQLAlchemy 3.1.1) | 2 | 4 | 5 | 4 | **15** | [`reports/audit-project-3.md`](reports/audit-project-3.md) |
 
 **code-smells-project — destaques dos 18 findings:**
 
@@ -125,13 +126,13 @@ Comparada à análise manual (seção A), a skill confirmou os problemas conheci
 
 **task-manager-api — destaques dos 15 findings:**
 
-- **CRITICAL (2):** `SECRET_KEY` e senha SMTP hardcoded (`app.py:13`, `services/notification_service.py:7-10`); `User.to_dict()` devolvendo o hash MD5 da senha em `GET /users/<id>`, `POST /users`, `PUT /users/<id>` e até no `POST /login` (`models/user.py:21`).
-- **HIGH (4):** token falso e previsível (`'fake-jwt-token-' + id`), que nenhuma rota verifica, com `DELETE /users/<id>` e troca de `role` para admin abertos a qualquer um (`routes/user_routes.py:119-122, 134-151, 207-211`); senha com MD5 sem salt (`models/user.py:29, 32`); `app.run(debug=True, host='0.0.0.0')` com o debugger do Werkzeug exposto (`app.py:34`); Fat Controller: handlers de 70–90 linhas e nenhuma camada de Controller (`routes/task_routes.py:85-223`, `routes/report_routes.py:12-101`).
-- **MEDIUM (6):** a regra de "tarefa atrasada" reimplementada 6 vezes, enquanto `Task.is_overdue()` existia e nunca era chamado; N+1 (`GET /tasks` fazia 2N+1 queries); validadores prontos (`utils/helpers.py`, `Task.validate_*`) ignorados pelas rotas, com input inválido virando 500; serialização duplicada fora do Model; `except:` genérico em 11 pontos; APIs deprecated.
-- **LOW (3):** rotas de `/categories` dentro do blueprint de relatórios; logging via `print()`; imports, código e dependências mortos (`marshmallow`, `requests`, `NotificationService` nunca instanciado).
+- **CRITICAL (2):** `SECRET_KEY`, URI do banco e senha SMTP hardcoded (`app.py:11-13`, `services/notification_service.py:9-10`); `User.to_dict()` devolvendo o hash MD5 da senha em `GET /users/<id>`, `POST /users`, `PUT /users/<id>` e até no `POST /login` (`models/user.py:21`).
+- **HIGH (4):** escalada de privilégio sem autenticação, com token falso (`'fake-jwt-token-' + id`) que nenhuma rota verifica; qualquer cliente anônimo apaga usuários (`DELETE /users/<id>`), vira admin pelo `PUT /users/<id>` ou já se cadastra como admin pelo `POST /users` (`routes/user_routes.py:52, 71-78, 119-125, 134-151, 207-211`); senha com MD5 sem salt (`models/user.py:27-32`); `app.run(debug=True, host='0.0.0.0')` com o debugger do Werkzeug exposto (`app.py:34`); Fat Controller: handlers de 50–140 linhas e nenhuma camada de Controller (`routes/task_routes.py:85-223`, `routes/report_routes.py:12-101`, `routes/user_routes.py:42-132`).
+- **MEDIUM (5):** a regra de "tarefa atrasada" reimplementada 6 vezes, enquanto `Task.is_overdue()` existia e nunca era chamado; N+1 (`GET /tasks` fazia 2N+1 queries); validadores prontos (`utils/helpers.py`, `Task.validate_*`) ignorados pelas rotas, com input inválido virando 500; `except:` genérico em 11 pontos; serialização duplicada fora do Model.
+- **LOW (4):** logging via `print()`; magic numbers e literais repetidos (status, roles, limites de prioridade); imports, código e dependências mortos (`marshmallow`, `requests`, `generate_id`); uso de APIs deprecated.
 - **APIs deprecated:** `datetime.utcnow()` (24 ocorrências, deprecated no Python 3.12); `Model.query.get()` (16 ocorrências, legado no SQLAlchemy 2.x); `hashlib.md5` para senha; `app.run(debug=True)`.
 
-Comparada à análise manual (seção A), a skill encontrou os problemas esperados para um projeto "já organizado", como duplicação, validação ignorada e N+1, e também dois problemas de segurança que não aparecem numa leitura rápida: o hash da senha vazando em todas as respostas de usuário e o debugger do Werkzeug exposto na rede. Houve ainda uma autocorreção. Durante a Fase 3, antes de mexer no código, a skill testou o finding LOW "dados órfãos ao deletar categoria" contra a app original e viu que o `backref` do SQLAlchemy já zera o `category_id` das tasks. Por ser um falso positivo, o finding foi removido do relatório, que caiu de 16 para 15 findings.
+Comparada à análise manual (seção A), a skill encontrou os problemas esperados para um projeto "já organizado", como duplicação, validação ignorada e N+1, e também problemas de segurança que não aparecem numa leitura rápida: o hash da senha vazando em todas as respostas de usuário, o debugger do Werkzeug exposto na rede e uma segunda porta para a escalada de privilégio, o `POST /users` aceitando `"role": "admin"` no cadastro público (ambas confirmadas com `curl` na app original). Houve ainda uma autocorreção. Na validação, a skill testou o finding LOW "dados órfãos ao deletar categoria" contra a app original e viu que o `backref` do SQLAlchemy já zera o `category_id` das tasks. Por ser um falso positivo, o finding foi removido do relatório, que caiu de 16 para 15 findings.
 
 ### Comparação antes/depois da estrutura
 
@@ -306,7 +307,7 @@ Principais transformações aplicadas (com o número do padrão no playbook). Co
 - **#5/#6:** consultas encapsuladas nos Models (`Task.search`, `Task.by_user`, `*.all_with_task_count`) e nenhum `db.session` fora de `models/`; serialização centralizada em `to_dict()` / `to_detail_dict()` / `to_summary_dict()`.
 - **#7:** `GET /tasks` passou de 17 para 1 query (`joinedload`), `GET /users` de 4 para 1, `GET /categories` de 5 para 1 (`LEFT JOIN ... GROUP BY`) e `/reports/summary` de 19 para 4.
 - **#8:** `Task.is_overdue()` virou a única implementação da regra de atraso, usada pelos 6 pontos que antes a reimplementavam.
-- **#9:** o token falso foi trocado por um token assinado com `SECRET_KEY`, e os decorators `require_auth`/`require_admin` foram criados e testados. Eles **ainda não estão aplicados a nenhuma rota**, porque exigir token mudaria o contrato público; essa decisão ficou registrada como pendente para o humano.
+- **#9/#9b:** o token falso foi trocado por um token assinado com `SECRET_KEY`, e os decorators de `middlewares/auth.py` foram **aplicados** às rotas de escrita de usuário: `@require_admin` em `DELETE /users/<id>`; `@require_auth` em `PUT /users/<id>` (usuário comum altera só a si mesmo e nunca `role`/`active`); `@optional_auth` em `POST /users` (cadastro público continua aberto, mas papel elevado exige token de admin). O middleware relê o usuário no banco a cada requisição, então um admin rebaixado perde o acesso na hora, mesmo com token ainda válido.
 - **#10:** MD5 trocado por `werkzeug.security` (scrypt), com migração automática dos hashes MD5 antigos no próximo login; `datetime.utcnow()` trocado por `utc_now()` (`datetime.now(timezone.utc)`); `Query.get()` trocado por `db.session.get()`; `debug` desligado por padrão.
 - **Erros:** os `except:` genéricos deram lugar a exceções de domínio (`ValidationError`, `NotFoundError`, ...) traduzidas em HTTP num handler central, que loga a causa e faz rollback.
 
@@ -374,7 +375,7 @@ Os arquivos antigos (`database.py`, `utils/helpers.py`) foram removidos.
 - [x] Linguagem detectada corretamente (Python)
 - [x] Framework detectado corretamente (Flask 3.0.0 + Flask-SQLAlchemy 3.1.1 + Flask-CORS 4.0.0)
 - [x] Domínio da aplicação descrito corretamente (Task Manager: tarefas, categorias, usuários, relatórios de produtividade)
-- [x] Número de arquivos analisados condiz com a realidade (15 arquivos, 1158 linhas)
+- [x] Número de arquivos analisados condiz com a realidade (17 arquivos `.py`, 1158 linhas)
 
 ##### Fase 2 — Auditoria
 - [x] Relatório segue o template definido nos arquivos de referência
@@ -393,7 +394,7 @@ Os arquivos antigos (`database.py`, `utils/helpers.py`) foram removidos.
 - [x] Error handling centralizado (`middlewares/error_handler.py`)
 - [x] Entry point claro (`app.py` → `create_app()`)
 - [x] Aplicação inicia sem erros (inclusive com `-W error::DeprecationWarning`)
-- [x] Endpoints originais respondem corretamente (41/41 requisições com o mesmo status code)
+- [x] Endpoints originais respondem corretamente (30/30 requisições com o mesmo status code; rotas de escrita de usuário validadas sem token → 401/403 e com token → status original, 19/19)
 
 ### Logs da aplicação rodando após a refatoração
 
@@ -483,25 +484,31 @@ receita do curso 1 depois        10967 (= 11 × 997, sem perder nenhuma escrita)
 **Boot do `task-manager-api` refatorado:**
 
 ```
-$ SECRET_KEY=... python app.py
+$ SECRET_KEY=... python seed.py && python app.py
+Seed concluído com sucesso!
+  3 usuários
+  4 categorias
+  10 tasks
  * Serving Flask app 'app'
  * Debug mode: off
  * Running on all addresses (0.0.0.0)
- * Running on http://127.0.0.1:5000
-2026-09-22 21:25:59,735 INFO werkzeug: 127.0.0.1 - - [22/Sep/2026 21:25:59] "GET /health HTTP/1.1" 200 -
-2026-09-22 21:25:59,875 INFO controllers.task_controller: Task criada: 11 - Nova task
-2026-09-22 21:25:59,953 INFO controllers.task_controller: Task atualizada: 11
-2026-09-22 21:25:59,987 INFO controllers.task_controller: Task deletada: 11
-2026-09-22 21:26:00,156 INFO controllers.user_controller: Usuário criado: 4 - Ana
-2026-09-22 21:26:00,585 INFO controllers.user_controller: Usuário deletado: 4
+2026-10-06 08:35:59,735 INFO werkzeug: 127.0.0.1 - - [06/Oct/2026 08:35:59] "GET /health HTTP/1.1" 200 -
+2026-10-06 08:36:06,624 INFO controllers.task_controller: Task criada: 11 - Nova task
+2026-10-06 08:36:06,643 INFO controllers.task_controller: Task atualizada: 11
+2026-10-06 08:36:06,660 INFO controllers.task_controller: Task deletada: 11
+2026-10-06 08:36:06,780 INFO controllers.user_controller: Usuário criado: 4 - Ana
+2026-10-06 08:36:06,815 INFO controllers.user_controller: Usuário deletado: 4
 ```
 
-**Validação dos endpoints:** antes de mudar o código, a skill populou um banco com o `seed.py` original e subiu a app original contra uma cópia dele. Nessa app rodou um roteiro de 41 requisições `curl`, cobrindo os 21 endpoints e os casos de erro (título curto, status/prioridade inválidos, usuário inexistente, data malformada, e-mail duplicado, login errado, 404s). As respostas foram gravadas como baseline. A versão refatorada rodou o mesmo roteiro contra outra cópia do **mesmo** banco. Resultado: **41/41 status codes iguais** e corpos idênticos depois de normalizar os timestamps. A única diferença é intencional:
+**Validação dos endpoints:** antes de mudar o código, a skill subiu a app original com o `seed.py` original e rodou um roteiro de 30 requisições, cobrindo os 21 endpoints e os casos de erro (título curto, status/prioridade inválidos, e-mail duplicado ou inválido, login errado, 404). As respostas foram gravadas como baseline. A versão refatorada rodou o mesmo roteiro sobre um banco recém-populado pelo mesmo seed, enviando o token do admin nas duas rotas que passaram a ser protegidas (`PUT` e `DELETE /users/<id>`). Resultado: **30/30 com o mesmo status code** e corpos idênticos depois de normalizar timestamps e token. As diferenças intencionais são:
 
 | Requisição | Antes | Depois |
 |---|---|---|
 | `GET /users/1`, `POST /users`, `PUT /users/<id>`, `POST /login` | 200/201, com o campo `password` (hash MD5) | 200/201, sem `password` |
 | `POST /login` | `"token": "fake-jwt-token-1"` | token assinado com `SECRET_KEY` (`eyJ1c2VyX2lkIjoxLC...`) |
+| `DELETE /users/<id>` sem token | 200, usuário e tasks apagados | 401 `Token ausente` (403 para usuário comum) |
+| `PUT /users/2 {"role":"admin"}` sem token | 200, Maria vira admin | 401 (403 com o token da própria Maria) |
+| `POST /users {"role":"admin"}` sem token | 201, conta admin criada | 403 (cadastro com `role` padrão segue 201) |
 | `POST /tasks` com `"priority": "2"` | 500 (`TypeError`) | 400 `Prioridade deve ser entre 1 e 5` |
 | `GET /tasks/search?priority=abc` | 500 (`ValueError`) | 400 `Prioridade inválida` |
 | `PUT /categories/1` sem corpo | 500 (`TypeError`) | 400 `Dados inválidos` |
@@ -510,12 +517,25 @@ $ SECRET_KEY=... python app.py
 Trecho das chamadas de verificação extra feitas contra a versão refatorada:
 
 ```
-login joao (hash MD5 legado)         200   → hash regravado como scrypt:32768:8:...
-login joao de novo                   200
-rota com @require_admin sem token    401 {"error": "Token ausente"}
-... com "fake-jwt-token-1"           401 {"error": "Token inválido"}
-... com token de usuário comum       403
-... com token do admin               200
+login joao (hash MD5 legado)                  200   → hash regravado como scrypt:32768:8:...
+login joao de novo                            200
+DELETE /users/3 sem token                     401 {"error": "Token ausente"}
+DELETE /users/3 com "fake-jwt-token-1"        401 {"error": "Token inválido"}
+DELETE /users/3 token de usuário comum        403
+PUT /users/2 {role:admin} sem token           401
+PUT /users/2 {role:admin} token próprio       403
+PUT /users/2 {active:false} token próprio     403
+PUT /users/1 {name} token de outro usuário    403
+PUT /users/2 {name} token próprio             200
+POST /users {role:admin} sem token            403
+POST /users {role:admin} token de usuário     403
+POST /users cadastro público (role padrão)    201
+POST /users {role:manager} token admin        201
+PUT /users/2 {role:manager} token admin       200
+DELETE /users/3 token admin                   200
+admin rebaixado: token antigo perde acesso    403   (o papel é relido do banco a cada requisição)
+POST /tasks {"priority": "2"}                 400   (antes 500 + debugger do Werkzeug)
+GET /tasks/search?priority=abc                400   (antes 500)
 queries  GET /tasks                  17 → 1
 queries  GET /users                   4 → 1
 queries  GET /categories              5 → 1
@@ -526,7 +546,7 @@ queries  GET /reports/summary        19 → 4
 
 - **Python/Flask, monolito (`code-smells-project`):** a skill detectou a stack a partir do `requirements.txt` e adaptou a estrutura à convenção do Flask: blueprints em `routes/` e conexão por requisição via `flask.g`. Criou uma camada de `services/` só para o fluxo de pedido, que mexe em várias tabelas; o CRUD simples ficou apenas no Model, seguindo a regra de evitar abstração especulativa. Também preservou o contrato da API e verificou isso comparando respostas antes e depois, não só olhando o status HTTP.
 - **Node.js/Express, God Class (`ecommerce-api-legacy`):** a skill não assumiu Python. Detectou a stack pelo `package.json`, usou a convenção do Express (`src/`, `Router`, middlewares encadeados, `app.locals` para injetar o banco) e resolveu com o que o Node já oferece: `crypto.scrypt` no lugar de bcrypt e `--env-file` no lugar de `dotenv`, sem nenhuma dependência nova. Tratou problemas próprios do Node, que não aparecem no projeto Flask: callback hell do `sqlite3` (virou `async/await`), erros de handlers `async` que o Express 4 não captura sozinho (virou `asyncHandler`) e transações numa conexão compartilhada por requisições concorrentes (viraram uma fila serializada, testada com 10 checkouts simultâneos). Aqui também só o fluxo de checkout, que mexe em várias tabelas, ganhou um Service. Antes de refatorar, a skill gravou as respostas da app original como baseline, para comparar depois com `diff`.
-- **Python/Flask parcialmente organizado (`task-manager-api`):** foi o teste do princípio "Adapte-se ao ponto de partida". A skill classificou o projeto como *parcialmente organizado* e não o tratou como monolito: manteve `models/`, `routes/`, `services/` e `utils/`, e só **adicionou** as camadas que faltavam (`controllers/`, `config/`, `middlewares/`). Como o projeto já usava ORM, a skill não criou Repository à parte e colocou as consultas nos próprios Models do SQLAlchemy, via `CRUDMixin` e classmethods. Adaptou também as recomendações do catálogo à stack: `joinedload` e `GROUP BY` do SQLAlchemy contra o N+1, `itsdangerous` (que já vem com o Flask) para o token, sem dependência nova, e `Query.get()` identificado como API legada do SQLAlchemy 2.x, algo que não estava no catálogo. Também tratou o banco já existente, que tinha hashes MD5 gravados: em vez de invalidar as senhas, elas são migradas no próximo login. Onde a correção mudaria o contrato público (exigir token nas rotas de usuário), a skill deixou a decisão para o humano em vez de decidir sozinha. Por fim, validou o próprio relatório contra a app original e removeu um falso positivo.
+- **Python/Flask parcialmente organizado (`task-manager-api`):** foi o teste do princípio "Adapte-se ao ponto de partida". A skill classificou o projeto como *parcialmente organizado* e não o tratou como monolito: manteve `models/`, `routes/`, `services/` e `utils/`, e só **adicionou** as camadas que faltavam (`controllers/`, `config/`, `middlewares/`). Como o projeto já usava ORM, a skill não criou Repository à parte e colocou as consultas nos próprios Models do SQLAlchemy, via `CRUDMixin` e classmethods. Adaptou também as recomendações do catálogo à stack: `joinedload` e `GROUP BY` do SQLAlchemy contra o N+1, `itsdangerous` (que já vem com o Flask) para o token, sem dependência nova, e `Query.get()` identificado como API legada do SQLAlchemy 2.x, algo que não estava no catálogo. Também tratou o banco já existente, que tinha hashes MD5 gravados: em vez de invalidar as senhas, elas são migradas no próximo login. Na proteção das rotas de usuário, escolheu o controle mais estreito que fecha a falha (`require_admin` só no delete; dono do recurso + campos privilegiados no `PUT`/`POST`), mantendo o cadastro público e a edição do próprio perfil. Por fim, validou o próprio relatório contra a app original e removeu um falso positivo.
 
 **D) Seção "Como Executar":**
 
@@ -618,6 +638,14 @@ python app.py             # sobe em http://localhost:5000
 
 Usuários do seed: `joao@email.com` / `1234` (admin), `maria@email.com` / `abcd` (user), `pedro@email.com` / `pass` (manager).
 
+As rotas de escrita de usuário exigem o token devolvido por `POST /login`, no header `Authorization: Bearer <token>`:
+
+| Rota | Proteção |
+|---|---|
+| `DELETE /users/<id>` | só admin |
+| `PUT /users/<id>` | usuário logado altera só a si mesmo e nunca `role`/`active`; admin altera qualquer um |
+| `POST /users` | público com `role` padrão `user`; `role` diferente de `user` exige token de admin |
+
 Variáveis de ambiente (ver `.env.example`):
 
 | Variável | Uso | Se ausente |
@@ -691,5 +719,19 @@ Em produção, use um servidor WSGI (`gunicorn "app:app"`) com `DEBUG=false`.
    curl -s $B/reports/user/1                     # 200 {"user":...,"statistics":...}
    curl -s $B/categories                         # 200, com task_count
    ```
-3. **Correções de segurança:** conferir que nenhuma resposta de usuário traz `password`, que o token do `/login` não é mais `fake-jwt-token-<id>` e que `POST /tasks` com `"priority": "2"` retorna 400 (e não 500 com o debugger exposto).
+3. **Correções de segurança:** conferir que nenhuma resposta de usuário traz `password`, que o token do `/login` não é mais `fake-jwt-token-<id>` e que `POST /tasks` com `"priority": "2"` retorna 400 (e não 500 com o debugger exposto). Depois, conferir as rotas protegidas:
+
+   ```bash
+   tok(){ curl -s -X POST -H "$J" $B/login -d "{\"email\":\"$1\",\"password\":\"$2\"}" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])'; }
+   ADMIN=$(tok joao@email.com 1234); USER=$(tok maria@email.com abcd)
+   curl -s -o /dev/null -w "%{http_code}\n" -X DELETE $B/users/3                                    # 401
+   curl -s -o /dev/null -w "%{http_code}\n" -X DELETE $B/users/3 -H "Authorization: Bearer $USER"   # 403
+   curl -s -o /dev/null -w "%{http_code}\n" -X PUT $B/users/2 -H "$J" -d '{"role":"admin"}'         # 401
+   curl -s -o /dev/null -w "%{http_code}\n" -X PUT $B/users/2 -H "$J" -H "Authorization: Bearer $USER" -d '{"role":"admin"}'   # 403
+   curl -s -o /dev/null -w "%{http_code}\n" -X PUT $B/users/2 -H "$J" -H "Authorization: Bearer $USER" -d '{"name":"Maria S."}'  # 200
+   curl -s -o /dev/null -w "%{http_code}\n" -X POST $B/users -H "$J" -d '{"name":"X","email":"x@x.com","password":"1234","role":"admin"}'  # 403
+   curl -s -o /dev/null -w "%{http_code}\n" -X POST $B/users -H "$J" -d '{"name":"Y","email":"y@x.com","password":"1234"}'                 # 201
+   curl -s -o /dev/null -w "%{http_code}\n" -X DELETE $B/users/3 -H "Authorization: Bearer $ADMIN"  # 200
+   grep -rn "@require_\|@optional_auth" routes/                                                    # middleware aplicado nas 3 rotas
+   ```
 4. **Estrutura:** conferir que não sobrou acesso ao banco fora de `models/` (`grep -rn "db.session\|\.query" controllers routes services` não deve retornar nada) nem APIs deprecated/segredos (`grep -rnE "utcnow|query\.get\(|super-secret|senha123|debug=True" --include=*.py .` não deve retornar nada).

@@ -14,6 +14,13 @@ from services import auth_service
 
 logger = logging.getLogger(__name__)
 
+# Campos que só um admin pode definir ou alterar
+PRIVILEGED_FIELDS = ("role", "active")
+
+
+def _is_admin(auth):
+    return bool(auth) and auth["role"] == "admin"
+
 
 def _get_user(user_id):
     user = User.find(user_id)
@@ -37,10 +44,13 @@ def get_user(user_id):
     return {**user.to_dict(), "tasks": [task.to_dict() for task in Task.by_user(user_id)]}, 200
 
 
-def create_user(data):
+def create_user(data, auth=None):
     require_payload(data)
     name, email, password = data.get("name"), data.get("email"), data.get("password")
     role = data.get("role", "user")
+    # Cadastro público continua aberto, mas só admin cria conta com papel elevado
+    if role != "user" and not _is_admin(auth):
+        raise ForbiddenError("Só administradores criam usuários com papel elevado")
 
     if not name:
         raise ValidationError("Nome é obrigatório")
@@ -61,9 +71,14 @@ def create_user(data):
     return user.to_dict(), 201
 
 
-def update_user(user_id, data):
+def update_user(user_id, data, auth):
     user = _get_user(user_id)
     require_payload(data)
+    if not _is_admin(auth):
+        if auth["user_id"] != user_id:
+            raise ForbiddenError("Só é possível alterar o próprio usuário")
+        if any(field in data for field in PRIVILEGED_FIELDS):
+            raise ForbiddenError("Só administradores alteram papel ou status")
 
     changes = {}
     if "name" in data:
