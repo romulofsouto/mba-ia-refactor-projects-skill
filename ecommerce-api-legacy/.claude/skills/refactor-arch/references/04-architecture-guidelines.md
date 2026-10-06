@@ -83,4 +83,5 @@ src/
 2. Nenhuma camada acima do Model/Repository monta SQL.
 3. Toda config sensível vem de variável de ambiente, nunca de literal no código.
 4. Erros são tratados em um lugar central, não replicados em cada handler.
-5. O contrato público da API (rotas, métodos, formato de payload) não muda por causa da refatoração interna — só a organização interna muda.
+5. O contrato público da API (rotas, métodos, formato de payload) não muda por causa da refatoração interna — só a organização interna muda. **Exceção:** correções de segurança apontadas na auditoria (ex: exigir autenticação/autorização em rota destrutiva ou que altera privilégio, rejeitar SQL injection) mudam a resposta *apenas* para chamadas não autorizadas ou maliciosas, e devem ser aplicadas — não são quebra de contrato.
+6. Middleware criado precisa estar aplicado onde o problema existe. Um middleware de autenticação que nenhuma rota usa é código morto, não uma correção.

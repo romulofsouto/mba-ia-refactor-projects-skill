@@ -55,7 +55,8 @@ Regras obrigatórias:
 4. Verifique explicitamente a seção "APIs Deprecated" do catálogo e inclua um finding dedicado se encontrar alguma ocorrência.
 5. Ordene os findings por severidade, CRITICAL → LOW.
 6. Use exatamente a estrutura de `03-report-template.md`.
-7. Salve o relatório completo em `reports/audit-project-N.md` na raiz do repositório (pergunte ao usuário qual N usar se não estiver óbvio pelo nome do projeto) e também imprima na tela.
+7. A `Recommendation:` de um finding de segurança descreve a correção completa que a Fase 3 vai aplicar (ex: "aplicar `require_admin` em `DELETE /users/<id>`"), nunca "fica pendente para decisão humana" — a confirmação no fim desta fase **é** a decisão humana.
+8. Salve o relatório completo em `reports/audit-project-N.md` na raiz do repositório (pergunte ao usuário qual N usar se não estiver óbvio pelo nome do projeto) e também imprima na tela.
 
 Ao final, **pare** e pergunte:
 
@@ -72,13 +73,15 @@ Objetivo: reestruturar o projeto para MVC (`04-architecture-guidelines.md`), apl
 Passos:
 
 1. Crie a nova estrutura de diretórios adaptando os nomes de pasta à convenção da linguagem/framework detectado na Fase 1 (`models/`, `routes/` ou `views/`, `controllers/`, `middlewares/`, `config/`).
-2. Aplique a transformação do playbook correspondente a cada finding CRITICAL e HIGH primeiro; depois MEDIUM e LOW, na medida do escopo.
+2. Aplique a transformação do playbook correspondente a cada finding CRITICAL e HIGH primeiro; depois MEDIUM e LOW, na medida do escopo. Findings de segurança CRITICAL/HIGH são resolvidos por completo nesta fase: criar um helper ou middleware sem aplicá-lo onde o finding aponta **não** conta como correção (ver Playbook #9).
 3. Extraia toda configuração/segredo hardcoded para variáveis de ambiente (crie `.env.example` com os nomes das variáveis, nunca commite um `.env` com valores reais).
-4. Preserve o **contrato público da API**: mesmas rotas, mesmos métodos HTTP, mesmo formato de payload de resposta. Quem consome a API de fora não deve perceber a refatoração — exceto por bugs de segurança que foram corrigidos de propósito (ex: SQL Injection, senha em texto plano).
+4. Preserve o **contrato público da API**: mesmas rotas, mesmos métodos HTTP, mesmo formato de payload de resposta. Quem consome a API de fora não deve perceber a refatoração — exceto por bugs de segurança que foram corrigidos de propósito (ex: SQL Injection, senha em texto plano, rota destrutiva ou de troca de privilégio que passa a exigir autenticação/autorização). Uma chamada anônima a uma rota perigosa passar a receber 401/403 é a correção esperada, não uma quebra de contrato — chamadas legítimas continuam com a mesma resposta.
 5. Depois de mover a lógica para a nova estrutura, **delete os arquivos antigos que ficaram órfãos** — não deixe o monólito antigo ao lado da nova estrutura.
 6. Valide o resultado:
    - Suba a aplicação e confirme que ela inicia sem erro (leia o log de boot).
    - Faça uma requisição real (curl) para cada endpoint que existia na Fase 1 e confirme que a resposta continua coerente.
+   - Para cada rota que passou a exigir autenticação: chame sem token (espera 401/403) e com um token válido obtido pelo login com um usuário adequado do seed (espera o status original). Documente as credenciais de teste usadas.
+   - Confirme por busca no código que todo middleware de auth criado é de fato usado nas rotas apontadas pelos findings.
    - Se algo quebrar, corrija antes de declarar sucesso.
 7. Imprima o resumo final:
 
@@ -92,7 +95,8 @@ PHASE 3: REFACTORING COMPLETE
 ## Validation
   ✓ Application boots without errors
   ✓ All endpoints respond correctly
-  ✓ Zero anti-patterns remaining (ou lista do que ficou pendente e por quê)
+  ✓ Protected routes: 401/403 without token, original status with token
+  ✓ Zero anti-patterns remaining (ou lista do que ficou pendente e por quê — nunca um finding de segurança CRITICAL/HIGH)
 ================================
 ```
 

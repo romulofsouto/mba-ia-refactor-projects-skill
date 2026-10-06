@@ -24,7 +24,12 @@ Para cada item: nome, severidade típica, sinais de detecção (o que procurar n
 **Por quê:** impossível testar uma parte isoladamente; qualquer mudança pequena arrisca quebrar um comportamento não relacionado em outro canto do mesmo arquivo.
 
 ### 4. Endpoint Perigoso Sem Autenticação — CRITICAL/HIGH
-**Sinais:** rota que executa uma ação destrutiva ou administrativa (reset de banco, execução de SQL arbitrário, exclusão em massa) sem nenhuma checagem de identidade/permissão antes de agir.
+**Sinais:**
+- rota que executa uma ação destrutiva ou administrativa (reset de banco, execução de SQL arbitrário, exclusão de registros/usuários) sem nenhuma checagem de identidade/permissão antes de agir;
+- rota de criação/edição que aceita do body um campo de privilégio (`role`, `is_admin`, `active`, `permissions`) sem checar quem está chamando — escalada de privilégio;
+- "token" de login previsível ou que nenhuma rota verifica (ex: `'fake-jwt-token-' + id`);
+- middleware/decorator de autenticação que existe no código mas não está aplicado a nenhuma rota (procure os usos dele, não só a definição).
+
 **Por quê:** é uma porta aberta — o dano potencial não depende de "achar" uma vulnerabilidade, só de conhecer a URL.
 
 ### 5. Fat Controller / Lógica de Negócio na Rota — HIGH

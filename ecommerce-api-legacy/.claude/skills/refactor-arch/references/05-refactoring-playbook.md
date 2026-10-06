@@ -229,6 +229,60 @@ def reset_database():
     ...
 ```
 
+### 9b. Rotas de escrita sobre usuários/papéis
+
+**Antes:** qualquer cliente anônimo apaga usuários ou se promove a admin.
+```python
+@user_bp.route("/users/<int:user_id>", methods=["PUT"])
+def update_user(user_id):
+    return user_controller.update_user(user_id, request.get_json())   # aceita {"role": "admin"}
+
+@user_bp.route("/users/<int:user_id>", methods=["DELETE"])
+def delete_user(user_id):
+    return user_controller.delete_user(user_id)
+```
+
+**Depois:** autentique a rota e autorize o campo sensível — sem bloquear o uso legítimo (o próprio usuário editar o seu perfil, cadastro público com papel padrão).
+```python
+# routes: o middleware identifica quem chama
+@user_bp.route("/users/<int:user_id>", methods=["PUT"])
+@require_auth
+def update_user(user_id):
+    return user_controller.update_user(user_id, request.get_json(), g.auth)
+
+@user_bp.route("/users/<int:user_id>", methods=["DELETE"])
+@require_admin
+def delete_user(user_id):
+    return user_controller.delete_user(user_id)
+
+# controller: regra de autorização sobre o dado
+PRIVILEGED_FIELDS = ("role", "active")
+
+def update_user(user_id, data, auth):
+    is_admin = auth["role"] == "admin"
+    if not is_admin and auth["user_id"] != user_id:
+        raise ForbiddenError("Só é possível alterar o próprio usuário")
+    if not is_admin and any(f in data for f in PRIVILEGED_FIELDS):
+        raise ForbiddenError("Só administradores alteram papel/status")
+    ...
+
+def create_user(data, auth=None):   # cadastro público continua aberto
+    role = data.get("role", "user")
+    if role != "user" and not (auth and auth["role"] == "admin"):
+        raise ForbiddenError("Só administradores criam usuários com papel elevado")
+    ...
+```
+Equivalente em Express: `router.delete("/users/:id", requireAdmin, controller.remove)` e a mesma checagem de `req.auth` no controller.
+
+### Regras deste padrão
+
+- **O finding só está resolvido quando o middleware está aplicado** a todas as rotas citadas nele. Criar o middleware e deixá-lo "disponível" sem uso não resolve nada — o relatório final não pode marcar isso como pendente.
+- Exigir autenticação em rota destrutiva/privilegiada é **correção de segurança deliberada**, não quebra de contrato (ver `04-architecture-guidelines.md`, regra 5). A confirmação humana da Fase 2 já autorizou essa correção — não a adie para "decisão humana" posterior.
+- Cubra **todas** as portas para o mesmo privilégio: se `PUT` permite trocar `role`, verifique também `POST` (criação) e qualquer outra rota que grave o mesmo campo.
+- Prefira o controle mais estreito que fecha a falha: `require_admin` em ações exclusivamente administrativas (delete, reset); `require_auth` + regra de dono/campo onde usuários comuns têm uso legítimo.
+- Se o projeto tem seed/fixture, garanta que existe um usuário admin com o qual a validação consiga obter token.
+- Valide cada rota protegida **duas vezes** na Fase 3: sem token (espera 401/403) e com token adequado (espera o status original, ex: 200).
+
 ---
 
 ## 10. Substituir APIs Deprecated (resolve seção "APIs Deprecated" do catálogo)
@@ -258,7 +312,9 @@ self.password = generate_password_hash(pwd)
 
 ## Checklist ao final da Fase 3
 
-- [ ] Todo finding CRITICAL e HIGH do relatório tem uma transformação aplicada (ou uma justificativa explícita de por que não, se algo foi propositalmente adiado).
+- [ ] Todo finding CRITICAL e HIGH do relatório tem uma transformação aplicada. Findings de **segurança** CRITICAL/HIGH nunca são adiados; só um finding arquitetural pode ficar pendente, com justificativa explícita no resumo final.
+- [ ] Todo middleware de autenticação/autorização criado está aplicado às rotas citadas no finding (busque os usos, não só a definição).
+- [ ] Rotas protegidas foram validadas sem token (401/403) e com token adequado (status original).
 - [ ] Nenhum segredo literal restou no código.
 - [ ] Nenhuma query é montada por concatenação de string com input externo.
 - [ ] Arquivos antigos órfãos foram removidos, não deixados ao lado da nova estrutura.
